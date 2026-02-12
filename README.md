@@ -5,8 +5,7 @@
 - Example usage: `python train_lim.py --no-save --no-prog_bar`
 
 
-
-Download training dataset here (104.6 mb): https://drive.google.com/file/d/1NZdXhGq6dqxh_PTQscNXchs6OcnoIdER/view?usp=sharing
+Download training dataset here (104.6 mb): https://drive.google.com/file/d/1NZdXhGq6dqxh_PTQscNXchs6OcnoIdER/view?usp=sharing <br>
 Download testing dataset here (29.2 mb): https://drive.google.com/file/d/1w7wPlNZVNjjvFcUDsCCKjYkz2hxxJbaj/view?usp=sharing
 
 
