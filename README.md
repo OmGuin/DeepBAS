@@ -6,7 +6,7 @@ All dependencies can be installed with `pip install -r requirements.txt`
 
 ## Datasets
 
-Make sure to download `pch_val.zip` and `pch_train.zip`, not the `pchdata` subfolder. These .zip files should be in the same directory as the notebooks/scripts.<br>
+Make sure to download `pch_val.zip` and `pch_train.zip`, not the `pchdata` subfolder. These `.zip` files should be in the same directory as the notebooks/scripts.<br>
 Download training dataset here (104.6 mb): https://drive.google.com/file/d/1NZdXhGq6dqxh_PTQscNXchs6OcnoIdER/view?usp=sharing (Last updated 2/12/26)<br>
 Download testing dataset here (29.2 mb): https://drive.google.com/file/d/1w7wPlNZVNjjvFcUDsCCKjYkz2hxxJbaj/view?usp=sharing (Last updated 2/12/26)
 
@@ -19,7 +19,7 @@ All simulations generate a folder with a subfolder called `pchdata`. Download th
 - Simulation will parallelize across `num_workers` processes. Ensure sufficient cpu count. Each worker requires <10 mb of RAM, so it should not be a bottleneck.
 
 `sim_dataMCval.py`: Testing dataset generation. Arguments: num_workers, time_vary_analysis
-- Example usage: `python sim_dataMCval_1a.py --num_workers=200, --no-time_vary_analysis`
+- Example usage: `python sim_dataMCval_1a.py --num_workers=200, --no-time_variable_analysis`
 - Example usage: `python sim_dataMCval_1a.py --num_workers=200, --time_variable_analysis`
 - The second example turns on the variable time analysis. If this is on, each simulation will run for 120 (virtual) seconds instead of 60 and save the photon counting histogram at 30 seconds, 60 seconds, and 120 seconds.
 
@@ -41,11 +41,12 @@ All simulations generate a folder with a subfolder called `pchdata`. Download th
 `models.py`, `datasets.py`: Contain classes for models and datasets, respectively.
 
 `CNN_LINEAR.ipynb`, `CNN_LOG.ipynb`: Notebooks for validation/testing for linear and log models, respectively
+**CNN_LOG.ipynb is a little bit outdated, CNN_LINEAR has some irrelevant code; will update soon.
 
 ## Processing Scripts
 
-`tamu_photons_to_pch.py`: Converts TAMU photon timestamp `.txt` files to numpy array of photon counting histograms.
-- Example usage: `python tamu_photons_to_pch.py "C:\path" --num_channels`
+`TAMUPhotonsToPCH.py`: Converts TAMU photon timestamp `.txt` files to numpy array of photon counting histograms.
+- Example usage: `python TAMUPhotonsToPCH.py "C:\path" --num_channels`
 - Outputs `num_channels` arrays of photons for each file
 
 `arrivalTimesToBAS.py`: Converts numpy array of arrival times to TAMU photon timestamps

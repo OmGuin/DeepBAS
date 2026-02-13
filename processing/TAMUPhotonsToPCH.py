@@ -6,8 +6,8 @@
 """
 example usage:
 
-format: python convert_photons.py "path" --ch num_channels
-example: python convert_photons.py "C:\data\data.txt" --ch 2
+format: python TAMUPhotonsToPCH.py "path" --ch num_channels
+example: python TAMUPhotonsToPCH.py "C:\data\data.txt" --ch 2
 
 data = np.load("path.npz", allow_pickle=False)
 header_json = data["header_json"].item()
