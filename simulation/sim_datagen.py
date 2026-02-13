@@ -6,22 +6,14 @@ import json
 from numba import njit
 import multiprocessing as mp
 import gc
-from utils import compute_underlying_dist
+from ..CNNp1a.utils import compute_underlying_dist
 
 #directory
 data_dir = os.path.join("data_gen", "pchdata")
 os.makedirs(data_dir, exist_ok=True)
 metadata = {
-    "D":1e-11,
-    "totaltime":60,
-    "binDt":5e-6,
-    "w0":3e-7,
-    "axialFactor":3,
-    "vFlow":5e-4,
-    "bgRate":1e2,
     "pch_edges":"np.logspace(np.log10(1), np.log10(8000), 25)"
 }
-
 with open(os.path.join(data_dir, f"metadata.json"), "w") as f:
     json.dump(metadata, f)
 
@@ -39,6 +31,7 @@ Lres = resFactor * Lbox     # m
 # 2a) Reservoir initialization
 area_yz = (2*Lbox)**2       # m^2
 Vres = (2*Lres) * area_yz   # m^3
+
 
 def SimPhotDiffFlowGL6(C_molar, Rp, b, Nres, D, totalTime, binDt, w0, axialFactor, includeBg, bgRate, beamShape, vFlow, rng, resFactor=10):
     # 1b) Concentration
@@ -79,7 +72,6 @@ def SimPhotDiffFlowGL6(C_molar, Rp, b, Nres, D, totalTime, binDt, w0, axialFacto
         pos, Rp_i, w0, w_z, Nres, nSteps, stepsPerSweep, dt, sigma, vFlow, Lres, Lbox,
         includeBg, beamShape, bgRate, perm_indices_x, perm_indices_y, perm_indices_z
     )
-    
     arrivalTimes = arrivalTimes[:idx]
 
     return arrivalTimes, Rp_i
@@ -144,7 +136,7 @@ def simulation_loop_jit(arrivalTimes, pos, Rp_i, w0, w_z, Nres, nSteps, stepsPer
             for j in range(NtotEv):
                 arrivalTimes[idx] = t0 + np.random.random() * dt
                 idx += 1
-        
+
         # Permute
         if stepsPerSweep < 1e8 and k % stepsPerSweep == 0:
             perm_x = perm_indices_x[perm_counter]
@@ -154,13 +146,12 @@ def simulation_loop_jit(arrivalTimes, pos, Rp_i, w0, w_z, Nres, nSteps, stepsPer
             pos[:, 1] = pos[perm_y, 1]
             pos[:, 2] = pos[perm_z, 2]
             perm_counter += 1
-
     
     return arrivalTimes, idx
 
-def run_one_env(env_num):
+def run_one_env(env_num, num_species, amps, conc, widths, D):
     #fixed variables
-    D = 1e-11                   #m^2/s
+    D = D                       #m^2/s
     dt = 5e-6                   #s
     vF = 5e-4                   #m/s
     tt = 60                     #s
@@ -175,19 +166,37 @@ def run_one_env(env_num):
     os.makedirs(env_dir, exist_ok=True)
 
     #ENV ground truth
-    num_species = rng.integers(0,4) #[0,3]   
-    total_conc = rng.uniform(9e-12, 7e-11)              # M
+    num_species = num_species   
+    total_conc = conc              # M
     
     if num_species == 0: #power law; fractions aren't relevant
         fractions = np.array([1.0], dtype=float)
         dist_type = 'pl'
     else:
         dist_type = 'ln'
-        min_frac = 0.15
-        while True:
-            fractions = rng.dirichlet([1.5] * num_species)
-            if np.all(fractions > min_frac):
-                break
+        match num_species:
+            case 1:
+                fractions = np.array([1.0], dtype=float)
+                sigma_1 = widths
+                AmpS1 = amps
+                sigma_b2 = sigma_b3 = sigma_2 = sigma_3 = None
+                AmpS2 = AmpS3 = None
+                sigma_b1 = float(np.sqrt(np.log((sigma_1 / AmpS1)**2 + 1)))
+            case 2:
+                fractions = np.array([0.5, 0.5], dtype=float)
+                sigma_1, sigma_2 = widths
+                AmpS1, AmpS2 = amps
+                sigma_b3 = sigma_3 = None
+                AmpS3 = None
+                sigma_b1 = float(np.sqrt(np.log((sigma_1 / AmpS1)**2 + 1)))
+                sigma_b2 = float(np.sqrt(np.log((sigma_2 / AmpS2)**2 + 1)))
+            case 3:
+                fractions = np.array([0.6, 0.3, 0.1], dtype=float)
+                sigma_1, sigma_2, sigma_3 = widths
+                AmpS1, AmpS2, AmpS3 = amps
+                sigma_b1 = float(np.sqrt(np.log((sigma_1 / AmpS1)**2 + 1)))
+                sigma_b2 = float(np.sqrt(np.log((sigma_2 / AmpS2)**2 + 1)))
+                sigma_b3 = float(np.sqrt(np.log((sigma_3 / AmpS3)**2 + 1)))
 
     Frac1 = fractions[0]
     Frac2 = fractions[1] if num_species >= 2 else 0.0
@@ -202,24 +211,7 @@ def run_one_env(env_num):
     at1 = np.array([])
     at2 = np.array([])
     at3 = np.array([])
-
-    amps = np.sort(rng.integers(50, 5000, size=num_species))
-    while num_species > 1 and not np.all(np.diff(amps) > 400):
-        amps = np.sort(rng.integers(50, 5000, size=num_species))
-
-    AmpS1 = int(amps[0]) if num_species >= 1 else float(rng.integers(50, 5000))
-    AmpS2 = int(amps[1]) if num_species >= 2 else None
-    AmpS3 = int(amps[2]) if num_species >= 3 else None
-
-    sigmas = rng.uniform(200, 1000, size=num_species)
-    sigma_1 = float(sigmas[0]) if num_species >= 1 else None
-    sigma_2 = float(sigmas[1]) if num_species >= 2 else None
-    sigma_3 = float(sigmas[2]) if num_species >= 3 else None
-    sigma_b1 = float(np.sqrt(np.log((sigma_1 / AmpS1)**2 + 1))) if num_species >= 1 else None
-    sigma_b2 = float(np.sqrt(np.log((sigma_2 / AmpS2)**2 + 1))) if num_species >= 2 else None
-    sigma_b3 = float(np.sqrt(np.log((sigma_3 / AmpS3)**2 + 1))) if num_species >= 3 else None
     alpha = (rng.uniform(1.0, 2.5) if rng.integers(0, 2) == 0 else rng.uniform(-3.5, 0)) if num_species < 1 else None
-
 
     # precompute underlying dist.
     if num_species >= 1:
@@ -230,7 +222,7 @@ def run_one_env(env_num):
         b2, Nres2 = compute_underlying_dist(Rp=AmpS2/500e-6, dist_type=dist_type, sigma_b=sigma_b2, alpha=alpha, rng=rng, conc=conc2)
     if num_species >= 3:
         b3, Nres3 = compute_underlying_dist(Rp=AmpS3/500e-6, dist_type=dist_type, sigma_b=sigma_b3, alpha=alpha, rng=rng, conc=conc3)
-        
+
     #run several simulations with identical parameters
     for sim in range(sims_per_env):
         if num_species >= 1:
@@ -277,7 +269,7 @@ def run_one_env(env_num):
                                                 includeBg = False, 
                                                 bgRate = 0, 
                                                 beamShape = 'gl',
-                                                vFlow=vF,
+                                                vFlow = vF,
                                                 rng = rng)
             
         if num_species == 3:
@@ -297,7 +289,7 @@ def run_one_env(env_num):
                                                 rng = rng)
 
         fullBrightDist = np.concatenate([truedist1.flatten()*setDt, truedist2.flatten()*setDt, truedist3.flatten()*setDt])
-
+        
         fullTOAs = np.concatenate([at1, at2, at3])
         fullTOAs = np.sort(fullTOAs)
         bins_hist = np.linspace(0, tt, int((tt)/(setDt)) + 1)
@@ -328,6 +320,13 @@ def run_one_env(env_num):
                 "Species3":sigma_3
             },
             "SimulationInputs":{
+                "D":D,
+                "totaltime":tt,
+                "binDt":dt,
+                "w0":w0,
+                "axialFactor":axialFactor,
+                "vFlow":vF,
+                "bgRate":bgRate,
                 "disttype":dist_type,
                 "sigma_bS1":sigma_b1,
                 "sigma_bS2":sigma_b2,
@@ -344,21 +343,72 @@ def run_one_env(env_num):
             }
         }
 
+        if sim == 0:
+            np.save(os.path.join(env_dir, f"arrivalTimes_{sim + 1}"), fullTOAs)
+
         with open(os.path.join(env_dir, f"GT{sim:02}.json"), "w") as f:
             json.dump(GT, f)
 
 
     print(f"Finished env {env_num}, Time: {time.time() - start_sim}")
     gc.collect()
-    return 
-
+    return
 
 if __name__ == '__main__':
+    I_L = 1000
+    I_Lp = 1500
+    
+    I_Mm = 2000
+    I_M = 2500
+    I_Mp = 3000
+    
+    I_Hm = 3500
+    I_H = 4500
+    
+    N_L = 1.4e-11
+    N_M = 4.2e-11
+    N_H = 7e-11
+    
+    W_N = 200
+    W_M = 500
+    W_H = 1000
+
+    D_L = 1e-11
+    D_H = 4e-10
+
+    jobs = [
+        (0, 1, I_L, N_L, W_N, D_L),
+        (1, 1, I_L, N_H, W_N, D_L),
+        (2, 1, I_L, N_L, W_M, D_L),
+        (3, 1, I_L, N_H, W_M, D_L),
+
+        (4, 1, I_H, N_L, W_N, D_L),
+        (5, 1, I_H, N_H, W_N, D_L),
+        (6, 1, I_H, N_L, W_M, D_L),
+        (7, 1, I_H, N_H, W_M, D_L),
+
+        (8, 2, (I_L, I_H), N_L, (W_M, W_M), D_L),
+        (9, 2, (I_Mp, I_Hm), N_L, (W_M, W_M), D_L),
+        (10, 2, (I_Mm, I_Mp), N_L, (W_M, W_M), D_L),
+
+        (11, 2, (I_L, I_H), N_H, (W_M, W_M), D_L),
+        (12, 2, (I_Mp, I_Hm), N_H, (W_M, W_M), D_L),
+        (13, 2, (I_Mm, I_Mp), N_H, (W_M, W_M), D_L),
+
+        (14, 3, (I_L, I_M, I_H), N_H, (W_M, W_M, W_M), D_L),
+
+        (15, 1, I_M, N_L, W_M, D_L),
+        (16, 1, I_M, N_M, W_M, D_L),
+        (17, 1, I_M, N_H, W_M, D_L),
+        (18, 1, I_M, N_L, W_M, D_H),
+        (19, 1, I_M, N_M, W_M, D_H),
+        (20, 1, I_M, N_H, W_M, D_H),
+    ]
+
     mp.set_start_method('spawn', force=True)
 
-    num_sims = 1000000
-    num_workers = 370
+    num_workers = len(jobs)
 
     with mp.Pool(processes=num_workers) as pool:
-        pool.map(run_one_env, range(num_sims))
+        pool.starmap(run_one_env, jobs)
 

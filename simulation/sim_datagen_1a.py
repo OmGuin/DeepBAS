@@ -6,6 +6,7 @@ import json
 from numba import njit
 import multiprocessing as mp
 import gc
+import argparse
 from utils import compute_underlying_dist
 
 #directory
@@ -341,9 +342,12 @@ def run_one_sim(sim_num):
 
 if __name__ == '__main__':
     mp.set_start_method('spawn', force=True)
+    parser = argparse.ArgumentParser(description='parallel monte carlo simulations')
+    parser.add_argument('--num_workers', type=int, default=200)
+    args = parser.parse_args()
 
     num_sims = 1000000
-    num_workers = 370
+    num_workers = args.num_workers
 
     with mp.Pool(processes=num_workers) as pool:
         pool.map(run_one_sim, range(num_sims))
