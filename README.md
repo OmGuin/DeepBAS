@@ -34,7 +34,7 @@ All simulations generate a folder with a subfolder called `pchdata`. Download th
 ## Deep Learning
 
 `train.py`: Train linear/log model. Arguments: learning rate, batch size, epochs, linear/log, output bins, inital beta, save, progress bar
-- Example usage: `python train.py --lr=2e-4 --batch_size=32, --num_epochs=100, --bin_type='lin', --output_bins=50, --init_beta=0.1`
+- Example usage: `python train.py --lr=2e-4 --batch_size=32 --num_epochs=100 --bin_type='lin' --output_bins=50 --init_beta=0.1`
 - Example usage: `python train.py --no-save --no-prog_bar --bin_type='log'`
 - Saves model in `models/`, loss curve figure, beta curve figure, and `.pkl` of loss/beta curves in `loss_curves/` 
 

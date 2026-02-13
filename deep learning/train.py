@@ -11,7 +11,7 @@ import os
 import pickle
 
 from models import BASLIN
-from datasets import LinSet
+from datasets import LinSet, LogSet
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 os.makedirs('loss_curves', exist_ok=True)
@@ -24,6 +24,7 @@ parser.add_argument('--batch_size', type=int, default=128)
 parser.add_argument('--num_epochs', type=int, default=250)
 parser.add_argument('--output_bins', type=int, default=50)
 parser.add_argument('--init_beta', type=float, default=0.5)
+parser.add_argument('--bin_type', type=str, default="lin")
 parser.add_argument('--save', action=argparse.BooleanOptionalAction, default=True)
 parser.add_argument('--prog_bar', action=argparse.BooleanOptionalAction, default=True)
 args = parser.parse_args()
@@ -48,8 +49,13 @@ optimizer = torch.optim.AdamW([
     {'params': other_params, 'lr':2e-5, 'weight_decay':1e-3},
     {'params': beta_param, 'lr':1e-3, 'weight_decay':0.0}
 ])
+
 criterion = nn.PoissonNLLLoss(log_input=False)
-dataset = LinSet(r"/content/train/pchdata", num_bins = args.output_bins)
+
+if args.bin_type == 'lin':
+    dataset = LinSet(r"/content/train/pchdata", num_bins = args.output_bins)
+else:
+    dataset = LogSet(r"/content/train/pchdata", num_bins = args.output_bins)
 
 train_ratio = 0.8
 val_ratio = 0.2
