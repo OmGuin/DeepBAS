@@ -1,66 +1,248 @@
-#this script takes in a file of single channel photon arrival times (arrivalTimes.npy)
-#and creates .par files for both preprocessing code and BAS code
+#!/usr/bin/env python3
+"""Create preprocessing/BAS .par files from .npy, .txt, or folder inputs.
 
+Supported inputs:
+1) .npy file of arrival times
+   - Writes a companion .txt file, preprocessing .par, and BAS .par
+2) .txt arrival-time file
+   - Writes preprocessing .par and BAS .par (does not rewrite .txt)
+3) Folder containing .txt arrival-time files
+   - Writes one preprocessing .par listing all .txt files and one BAS .par
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+from datetime import datetime
+from pathlib import Path
 
 import numpy as np
-import os
-import argparse
-from datetime import datetime
 
 
-parser = argparse.ArgumentParser(description='convert simulated data to format needed for preprocessing -> bas')
-parser.add_argument('arrivalTimesPath', type=str, help='path to arrivalTimes numpy array')
-args = parser.parse_args()
+def _detect_channels_from_txt(txt_path: Path) -> int:
+    lines = txt_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    end_idx = None
+    for i, line in enumerate(lines):
+        if "***end header***" in line.lower():
+            end_idx = i
+            break
 
-aTpath, aTfile = os.path.split(args.arrivalTimesPath)
-arrivalTimes = np.load(args.arrivalTimesPath)
+    data_lines = lines[end_idx + 1 :] if end_idx is not None else lines
+    data_lines = [ln.strip() for ln in data_lines if ln.strip()]
+    if not data_lines:
+        return 1
 
-txtFile = aTfile.removesuffix('.npy')+".txt"
-txtPath = os.path.join(aTpath, txtFile)
-parPath = txtPath.replace('.txt', '.par')
-basPath = txtPath[:-4]+'_BAS.par'
+    # First non-empty line after header is usually channel header (e.g., "Ch 1\tCh 3").
+    first = data_lines[0]
+    if "\t" in first:
+        label_count = len([x for x in first.split("\t") if x.strip()])
+    else:
+        label_count = len(first.split())
 
-with open(txtPath, 'w') as f:
-    f.write(f'{datetime.now().strftime("%d%b%y-%H%M%S")}\n\n')
-    f.write('Total acquisition time: 60 sec \n')
-    f.write('MT Clock: 1 sec\n')
-    f.write('Bin width for correlator intensity data: 500.00 usec \n')
-    f.write('Scan diamater: 0.40 mm \n')
-    f.write('Scan speed: 0.50 mm/sec \n')
-    f.write('Lasers Active: 488 @ 0.050 mW \n')
-    f.write('Laser modulation not active \n')
-    f.write('Notes: \n')
-    f.write('Simulated data\n')
-    f.write('***end header*** \n\n')
-    f.write('I_A  I_B \n')
-    for timeStamp in arrivalTimes:
-        f.write(str(timeStamp)+'\n')
+    numeric_count = 0
+    for ln in data_lines:
+        if "\t" in ln:
+            parts = [x.strip() for x in ln.split("\t") if x.strip()]
+        else:
+            parts = ln.split()
+        if not parts:
+            continue
+        try:
+            [float(x) for x in parts]
+            numeric_count = len(parts)
+            break
+        except ValueError:
+            continue
 
-with open(parPath, 'w') as f:
-    f.write('%%%% (maintain 5 header lines) \n')
-    f.write('These data represent simulated data with 3 independent populations \n')
-    f.write('These header lines can be used to explain the point of the data collection \n')
-    f.write('and point to other informative files with additional information. \n')
-    f.write('%%%% \n')
-    f.write('\n')
-    f.write(txtFile)
-    f.write('\n\n')
-    f.write('datatype TotTime MTclock bintime driftwinA driftwinB driftwinC threshA threshB threshC corrt dofit colA colB colC\n')
-    formatSpec = '%d %f %.2e %.6f %d %d %d %d %d %d %.3f %d %d %d %d\n'
-    f.write(formatSpec % (1, 60, 1, 500e-6, 0, 0, 0, 1, 1, 1, 0.003, 0, 1, 0, 0))
-    f.write('\n')
-
-
-with open(basPath, 'w') as f:
-    f.write('%%%%    (maintain 5 header lines)\n')
-    f.write('Here there be parameters associated with \n')
-    f.write('BAS processing (use= 1 or 0). Seems better to include in a separate parameter file from\n')
-    f.write('Preprocessing; Offset 0 = none, 1 = mean , 2 = median, 3 = rms\n')
-    f.write('%%%%\n\n')
-
-    f.write(txtFile.replace('.txt', '.par') + '\n\n')
-
-    f.write('useA useB useC OffsetA  OffsetB OffsetC smooth showfig\n')
-    f.write('1 1 1 0 0 0 1 1\n')
+    n_channels = numeric_count or label_count or 1
+    if n_channels < 1:
+        n_channels = 1
+    if n_channels > 3:
+        raise ValueError(f"{txt_path.name}: detected {n_channels} channels; only up to 3 are supported.")
+    return n_channels
 
 
+def _extract_total_time_from_txt(txt_path: Path, default: float = 60.0) -> float:
+    text = txt_path.read_text(encoding="utf-8", errors="ignore")
+    patterns = [
+        r"Acquisition time:\s*([0-9]*\.?[0-9]+)\s*sec",
+        r"Total acquisition time:\s*([0-9]*\.?[0-9]+)\s*sec",
+        r"Total time:\s*([0-9]*\.?[0-9]+)\s*sec",
+    ]
+    for pat in patterns:
+        m = re.search(pat, text, flags=re.IGNORECASE)
+        if m:
+            return float(m.group(1))
+    return default
+
+
+def _channel_flags(n_channels: int) -> tuple[int, int, int, int, int, int]:
+    useA = 1 if n_channels >= 1 else 0
+    useB = 1 if n_channels >= 2 else 0
+    useC = 1 if n_channels >= 3 else 0
+    colA = 1 if n_channels >= 1 else 0
+    colB = 2 if n_channels >= 2 else 0
+    colC = 3 if n_channels >= 3 else 0
+    return useA, useB, useC, colA, colB, colC
+
+
+def _write_txt_from_npy(npy_path: Path) -> Path:
+    arrival_times = np.load(npy_path)
+    txt_path = npy_path.with_suffix(".txt")
+
+    with txt_path.open("w", encoding="utf-8") as f:
+        f.write(f"{datetime.now().strftime('%d%b%y-%H%M%S')}\n\n")
+        f.write("Total acquisition time: 60 sec \n")
+        f.write("MT Clock: 1 sec\n")
+        f.write("Bin width for correlator intensity data: 500.00 usec \n")
+        f.write("Scan diamater: 0.40 mm \n")
+        f.write("Scan speed: 0.50 mm/sec \n")
+        f.write("Lasers Active: 488 @ 0.050 mW \n")
+        f.write("Laser modulation not active \n")
+        f.write("Notes: \n")
+        f.write("Simulated data\n")
+        f.write("***end header*** \n\n")
+        f.write("Ch 1\n")
+        for ts in np.asarray(arrival_times).reshape(-1):
+            f.write(f"{ts}\n")
+
+    return txt_path
+
+
+def _write_pre_par(
+    pre_par_path: Path,
+    txt_files: list[Path],
+    tot_time: float,
+    mt_clock: float,
+    tbin: float,
+    dofit: int,
+    colA: int,
+    colB: int,
+    colC: int,
+) -> None:
+    with pre_par_path.open("w", encoding="utf-8") as f:
+        f.write("%%%%    (maintain 5 header lines)\n")
+        f.write("Generated by arrivalTimesToBAS.py\n")
+        f.write("Input may be .npy, one .txt, or folder of .txt files\n")
+        f.write("Edit parameters below as needed for your experiment\n")
+        f.write("%%%%\n\n")
+
+        for txt in txt_files:
+            f.write(f"{txt.name}\n")
+        f.write("\n")
+        f.write(
+            "datatype TotTime MTclock bintime driftwinA driftwinB driftwinC "
+            "threshA threshB threshC corrt dofit colA colB colC\n"
+        )
+        f.write(
+            f"1 {tot_time:.6g} {mt_clock:.6g} {tbin:.6g} "
+            f"0 0 0 1 1 1 0.003 {dofit} {colA} {colB} {colC}\n"
+        )
+
+
+def _write_bas_par(bas_par_path: Path, pre_par_name: str, useA: int, useB: int, useC: int) -> None:
+    with bas_par_path.open("w", encoding="utf-8") as f:
+        f.write("%%%%    (maintain 5 header lines)\n")
+        f.write("Here there be parameters associated with \n")
+        f.write("BAS processing (use= 1 or 0). Seems better to include in a separate parameter file from\n")
+        f.write("Preprocessing; Offset 0 = none, 1 = mean , 2 = median, 3 = rms\n")
+        f.write("%%%%\n\n")
+        f.write(f"{pre_par_name}\n\n")
+        f.write("useA useB useC OffsetA  OffsetB OffsetC smooth showfig\n")
+        f.write(f"{useA} {useB} {useC} 0 0 0 1 1\n")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Create preprocessing/BAS .par files for .npy, .txt, or folder of .txt inputs."
+    )
+    parser.add_argument("input_path", type=Path, help="Path to .npy, .txt, or directory containing .txt files")
+    parser.add_argument("--pre-name", type=str, default=None, help="Output preprocessing .par file name")
+    parser.add_argument("--bas-name", type=str, default=None, help="Output BAS .par file name")
+    parser.add_argument("--tbin", type=float, default=500e-6, help="Binning time for preprocessing .par (seconds)")
+    parser.add_argument("--dofit", type=int, default=0, choices=[0, 1], help="Set preprocessing dofit flag")
+    args = parser.parse_args()
+
+    in_path = args.input_path.resolve()
+    if not in_path.exists():
+        raise FileNotFoundError(f"Input does not exist: {in_path}")
+
+    txt_files: list[Path]
+    tot_time: float
+    mt_clock: float
+
+    if in_path.is_file() and in_path.suffix.lower() == ".npy":
+        txt_path = _write_txt_from_npy(in_path)
+        txt_files = [txt_path]
+        n_channels = 1
+        tot_time = 60.0
+        mt_clock = 1.0
+        out_dir = in_path.parent
+        default_pre = f"{in_path.stem}.par"
+        default_bas = f"{in_path.stem}_BAS.par"
+    elif in_path.is_file() and in_path.suffix.lower() == ".txt":
+        txt_files = [in_path]
+        n_channels = _detect_channels_from_txt(in_path)
+        tot_time = _extract_total_time_from_txt(in_path, default=60.0)
+        mt_clock = 82.31e-12
+        out_dir = in_path.parent
+        default_pre = f"{in_path.stem}.par"
+        default_bas = f"{in_path.stem}_BAS.par"
+    elif in_path.is_dir():
+        txt_files = sorted(in_path.glob("*.txt"))
+        if not txt_files:
+            raise ValueError(f"No .txt files found in folder: {in_path}")
+        counts = [_detect_channels_from_txt(p) for p in txt_files]
+        if len(set(counts)) != 1:
+            raise ValueError(
+                "Input folder has mixed channel counts across .txt files. "
+                f"Detected counts: {sorted(set(counts))}"
+            )
+        n_channels = counts[0]
+        times = [_extract_total_time_from_txt(p, default=60.0) for p in txt_files]
+        tot_time = float(np.median(times))
+        mt_clock = 82.31e-12
+        out_dir = in_path
+        default_pre = f"Pre_{in_path.name}.par"
+        default_bas = f"Pre_{in_path.name}_BAS.par"
+    else:
+        raise ValueError("Input must be a .npy file, .txt file, or a folder path.")
+
+    useA, useB, useC, colA, colB, colC = _channel_flags(n_channels)
+    pre_name = args.pre_name if args.pre_name else default_pre
+    bas_name = args.bas_name if args.bas_name else default_bas
+    if not pre_name.lower().endswith(".par"):
+        pre_name = f"{pre_name}.par"
+    if not bas_name.lower().endswith(".par"):
+        bas_name = f"{bas_name}.par"
+
+    pre_par_path = out_dir / pre_name
+    bas_par_path = out_dir / bas_name
+
+    _write_pre_par(
+        pre_par_path=pre_par_path,
+        txt_files=txt_files,
+        tot_time=tot_time,
+        mt_clock=mt_clock,
+        tbin=args.tbin,
+        dofit=args.dofit,
+        colA=colA,
+        colB=colB,
+        colC=colC,
+    )
+    _write_bas_par(
+        bas_par_path=bas_par_path,
+        pre_par_name=pre_par_path.name,
+        useA=useA,
+        useB=useB,
+        useC=useC,
+    )
+
+    print(f"Detected channels: {n_channels}")
+    print(f"Wrote preprocessing parameters: {pre_par_path}")
+    print(f"Wrote BAS parameters: {bas_par_path}")
+
+
+if __name__ == "__main__":
+    main()

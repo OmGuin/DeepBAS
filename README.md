@@ -40,8 +40,8 @@ All simulations generate a folder with a subfolder called `pchdata`. Download th
 
 `models.py`, `datasets.py`: Contain classes for models and datasets, respectively.
 
-`CNN_LINEAR.ipynb`, `CNN_LOG.ipynb`: Notebooks for validation/testing for linear and log models, respectively
-**CNN_LOG.ipynb is a little bit outdated, CNN_LINEAR has some irrelevant code; will update soon.
+`CNN_LINEAR.ipynb`: Notebooks for validation/testing for models; also has linux commands for unpacking datasets.
+- This notebook has some irrelevant code; will update soon.
 
 ## Processing Scripts
 
@@ -49,6 +49,9 @@ All simulations generate a folder with a subfolder called `pchdata`. Download th
 - Example usage: `python TAMUPhotonsToPCH.py "C:\path" --num_channels`
 - Outputs `num_channels` arrays of photons for each file
 
-`arrivalTimesToBAS.py`: Converts numpy array of arrival times to TAMU photon timestamps
-- Example usage: `python arrivalTimesToBAS.py "C:\path"`
+`arrivalTimesToBAS.py`: Converts numpy array of arrival times (`.npy`) OR `.txt` to TAMU photon timestamps and `.par` files.
 - Outputs `.par` files needed for BAS & BAS preprocessing
+- Example usage:
+  + `.npy`: `python arrivalTimesToBAS.py path\to\arrivalTimes.npy`
+  + Single `.txt`: `python arrivalTimesToBAS.py path\to\arrivalTimes.txt`
+  + Folder of `.txt`: `python arrivalTimesToBAS.py path\to\data_folder --pre-name Pre_name.par --bas-name BAS_name.par`
