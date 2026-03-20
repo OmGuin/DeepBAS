@@ -6,7 +6,8 @@ import json
 from numba import njit
 import multiprocessing as mp
 import gc
-from ..CNNp1a.utils import compute_underlying_dist
+from utils import compute_underlying_dist
+import argparse
 
 #directory
 data_dir = os.path.join("data_gen", "pchdata")
@@ -14,10 +15,13 @@ os.makedirs(data_dir, exist_ok=True)
 metadata = {
     "pch_edges":"np.logspace(np.log10(1), np.log10(8000), 25)"
 }
-with open(os.path.join(data_dir, f"metadata.json"), "w") as f:
-    json.dump(metadata, f)
 
 sims_per_env = 10
+
+parser = argparse.ArgumentParser(description='parallel monte carlo simulations')
+parser.add_argument('--diff_event_counts', action=argparse.BooleanOptionalAction, default=False)
+args = parser.parse_args()
+
 
 # 1a) Geometry & Constraints
 NA = 6.022e23               # particles/mol
@@ -121,7 +125,8 @@ def simulation_loop_jit(arrivalTimes, pos, Rp_i, w0, w_z, Nres, nSteps, stepsPer
         Rtot = np.sum(Rp_i * W)
         mean_photons = Rtot * dt
         Nph = np.random.poisson(mean_photons)
-        Nbg = np.random.poisson(bgRate * dt) if includeBg else 0
+        # Nbg = np.random.poisson(bgRate * dt) if includeBg else 0
+        Nbg = 0
         NtotEv = Nph + Nbg
         if NtotEv > 0:
             need = idx + NtotEv
@@ -156,8 +161,9 @@ def run_one_env(env_num, num_species, amps, conc, widths, D):
     vF = 5e-4                   #m/s
     tt = 60                     #s
     setDt = 500e-6              #s
-    bgRate = 1e2                #counts/s
-
+    bgRate = 0                #counts/s
+    if args.diff_event_counts:
+        tt = 120
     #ENV specific ops
     seed = env_num + int(time.time()) % 10000
     rng = np.random.default_rng(seed)
@@ -295,7 +301,11 @@ def run_one_env(env_num, num_species, amps, conc, widths, D):
         bins_hist = np.linspace(0, tt, int((tt)/(setDt)) + 1)
         histA, _ = np.histogram(fullTOAs, bins_hist)
         PCHedges = np.logspace(np.log10(1), np.log10(8000), 25)
-        PCHbins, _ = np.histogram(histA, bins=PCHedges)
+        PCHbins, _ = np.histogram(histA[:120000], bins=PCHedges)
+
+        PCH30, _ = np.histogram(histA[:60000], bins=PCHedges)
+        PCH120, _ = np.histogram(histA, bins=PCHedges)
+
 
         GT = {
             "Amplitudes":{
@@ -343,6 +353,14 @@ def run_one_env(env_num, num_species, amps, conc, widths, D):
             }
         }
 
+        if args.diff_event_counts:
+            PCH30, _ = np.histogram(histA[:60000], bins=PCHedges)
+            PCH120, _ = np.histogram(histA, bins=PCHedges)
+            GT['DifferentEventCount'] = {
+                "pch30": PCH30.tolist(),
+                "pch120":PCH120.tolist()
+            }
+
         if sim == 0:
             np.save(os.path.join(env_dir, f"arrivalTimes_{sim + 1}"), fullTOAs)
 
@@ -376,34 +394,60 @@ if __name__ == '__main__':
     D_L = 1e-11
     D_H = 4e-10
 
+    # jobs = [
+    #     (0, 1, I_L, N_L, W_N, D_L),
+    #     (1, 1, I_L, N_H, W_N, D_L),
+    #     (2, 1, I_L, N_L, W_M, D_L),
+    #     (3, 1, I_L, N_H, W_M, D_L),
+
+    #     (4, 1, I_H, N_L, W_N, D_L),
+    #     (5, 1, I_H, N_H, W_N, D_L),
+    #     (6, 1, I_H, N_L, W_M, D_L),
+    #     (7, 1, I_H, N_H, W_M, D_L),
+
+    #     (8, 2, (I_L, I_H), N_L, (W_M, W_M), D_L),
+    #     (9, 2, (I_Mp, I_Hm), N_L, (W_M, W_M), D_L),
+    #     (10, 2, (I_Mm, I_Mp), N_L, (W_M, W_M), D_L),
+
+    #     (11, 2, (I_L, I_H), N_H, (W_M, W_M), D_L),
+    #     (12, 2, (I_Mp, I_Hm), N_H, (W_M, W_M), D_L),
+    #     (13, 2, (I_Mm, I_Mp), N_H, (W_M, W_M), D_L),
+
+    #     (14, 3, (I_L, I_M, I_H), N_H, (W_M, W_M, W_M), D_L),
+
+    #     (15, 1, I_M, N_L, W_M, D_L),
+    #     (16, 1, I_M, N_M, W_M, D_L),
+    #     (17, 1, I_M, N_H, W_M, D_L),
+    #     (18, 1, I_M, N_L, W_M, D_H),
+    #     (19, 1, I_M, N_M, W_M, D_H),
+    #     (20, 1, I_M, N_H, W_M, D_H),
+    # ]
     jobs = [
-        (0, 1, I_L, N_L, W_N, D_L),
-        (1, 1, I_L, N_H, W_N, D_L),
-        (2, 1, I_L, N_L, W_M, D_L),
-        (3, 1, I_L, N_H, W_M, D_L),
+        (0, 2, (I_L, I_H), N_H, (W_M, W_M), D_L),
+        (1, 2, (I_L, I_Hm), N_H, (W_M, W_M), D_L),
+        (2, 2, (I_L, I_Mp), N_H, (W_M, W_M), D_L),
+        (3, 2, (I_L, I_M), N_H, (W_M, W_M), D_L),
+        (4, 2, (I_L, I_Mm), N_H, (W_M, W_M), D_L),
+        (5, 2, (I_L, I_Lp), N_H, (W_M, W_M), D_L),
 
-        (4, 1, I_H, N_L, W_N, D_L),
-        (5, 1, I_H, N_H, W_N, D_L),
-        (6, 1, I_H, N_L, W_M, D_L),
-        (7, 1, I_H, N_H, W_M, D_L),
+        (6, 2, (I_L, I_H), N_H, (W_M, W_M), D_L),
+        (7, 2, (I_Lp, I_H), N_H, (W_M, W_M), D_L),
+        (8, 2, (I_Mm, I_H), N_H, (W_M, W_M), D_L),
+        (9, 2, (I_M, I_H), N_H, (W_M, W_M), D_L),
+        (10, 2, (I_Mp, I_H), N_H, (W_M, W_M), D_L),
+        (11, 2, (I_Hm, I_H), N_H, (W_M, W_M), D_L),
 
-        (8, 2, (I_L, I_H), N_L, (W_M, W_M), D_L),
-        (9, 2, (I_Mp, I_Hm), N_L, (W_M, W_M), D_L),
-        (10, 2, (I_Mm, I_Mp), N_L, (W_M, W_M), D_L),
-
-        (11, 2, (I_L, I_H), N_H, (W_M, W_M), D_L),
-        (12, 2, (I_Mp, I_Hm), N_H, (W_M, W_M), D_L),
-        (13, 2, (I_Mm, I_Mp), N_H, (W_M, W_M), D_L),
-
-        (14, 3, (I_L, I_M, I_H), N_H, (W_M, W_M, W_M), D_L),
-
-        (15, 1, I_M, N_L, W_M, D_L),
-        (16, 1, I_M, N_M, W_M, D_L),
-        (17, 1, I_M, N_H, W_M, D_L),
-        (18, 1, I_M, N_L, W_M, D_H),
-        (19, 1, I_M, N_M, W_M, D_H),
-        (20, 1, I_M, N_H, W_M, D_H),
+        (12, 2, (I_L, I_H), N_H, (W_M, W_M), D_L),
+        (13, 2, (I_Lp, I_Hm), N_H, (W_M, W_M), D_L),
+        (14, 2, (I_Mm, I_Mp), N_H, (W_M, W_M), D_L),
+        (15, 2, (I_M, I_Mp), N_H, (W_M, W_M), D_L),
+        (16, 2, (I_M, I_Mm), N_H, (W_M, W_M), D_L),
     ]
+
+    metadata["samples"] = jobs
+
+    with open(os.path.join(data_dir, f"metadata.json"), "w") as f:
+        json.dump(metadata, f)
 
     mp.set_start_method('spawn', force=True)
 
@@ -411,4 +455,3 @@ if __name__ == '__main__':
 
     with mp.Pool(processes=num_workers) as pool:
         pool.starmap(run_one_env, jobs)
-
